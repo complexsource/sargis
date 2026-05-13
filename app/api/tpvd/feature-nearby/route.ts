@@ -1,107 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import type { Geometry } from "geojson";
-import { buildTpvdNearbyFinalPlotUrl, type TpvdFinalPlotProperties } from "@/lib/tpvd/service";
-
-type WfsFeature = {
-  id?: string;
-  geometry?: Geometry;
-  properties?: TpvdFinalPlotProperties;
-};
-
-const metersPerDegree = 111_320;
-
-const toPoint = (coordinates: unknown): [number, number] | null => {
-  if (!Array.isArray(coordinates) || coordinates.length < 2) return null;
-  const [lng, lat] = coordinates;
-  return typeof lng === "number" && typeof lat === "number" ? [lng, lat] : null;
-};
-
-const pointInRing = (point: [number, number], ring: number[][]) => {
-  let inside = false;
-  const [x, y] = point;
-  for (let i = 0, j = ring.length - 1; i < ring.length; j = i++) {
-    const xi = ring[i][0];
-    const yi = ring[i][1];
-    const xj = ring[j][0];
-    const yj = ring[j][1];
-    const intersects = yi > y !== yj > y && x < ((xj - xi) * (y - yi)) / (yj - yi || Number.EPSILON) + xi;
-    if (intersects) inside = !inside;
-  }
-  return inside;
-};
-
-const pointInPolygon = (point: [number, number], polygon: number[][][]) => {
-  if (!polygon.length || !pointInRing(point, polygon[0])) return false;
-  return !polygon.slice(1).some((hole) => pointInRing(point, hole));
-};
-
-const distanceToSegment = (point: [number, number], a: [number, number], b: [number, number]) => {
-  const latScale = Math.cos((point[1] * Math.PI) / 180);
-  const px = point[0] * metersPerDegree * latScale;
-  const py = point[1] * metersPerDegree;
-  const ax = a[0] * metersPerDegree * latScale;
-  const ay = a[1] * metersPerDegree;
-  const bx = b[0] * metersPerDegree * latScale;
-  const by = b[1] * metersPerDegree;
-  const dx = bx - ax;
-  const dy = by - ay;
-  if (dx === 0 && dy === 0) return Math.hypot(px - ax, py - ay);
-  const t = Math.max(0, Math.min(1, ((px - ax) * dx + (py - ay) * dy) / (dx * dx + dy * dy)));
-  return Math.hypot(px - (ax + t * dx), py - (ay + t * dy));
-};
-
-const ringDistance = (point: [number, number], ring: number[][]) => {
-  let min = Number.POSITIVE_INFINITY;
-  for (let index = 1; index < ring.length; index++) {
-    const a = toPoint(ring[index - 1]);
-    const b = toPoint(ring[index]);
-    if (!a || !b) continue;
-    min = Math.min(min, distanceToSegment(point, a, b));
-  }
-  return min;
-};
-
-const geometryScore = (geometry: Geometry | undefined, point: [number, number]) => {
-  if (!geometry) return Number.POSITIVE_INFINITY;
-
-  if (geometry.type === "Polygon") {
-    const polygon = geometry.coordinates as number[][][];
-    const contains = pointInPolygon(point, polygon);
-    const distance = Math.min(...polygon.map((ring) => ringDistance(point, ring)));
-    return contains ? -1000 + distance : distance;
-  }
-
-  if (geometry.type === "MultiPolygon") {
-    return Math.min(
-      ...geometry.coordinates.map((polygon) => {
-        const contains = pointInPolygon(point, polygon as number[][][]);
-        const distance = Math.min(...(polygon as number[][][]).map((ring) => ringDistance(point, ring)));
-        return contains ? -1000 + distance : distance;
-      })
-    );
-  }
-
-  if (geometry.type === "LineString") {
-    return ringDistance(point, geometry.coordinates as number[][]);
-  }
-
-  if (geometry.type === "MultiLineString") {
-    return Math.min(...geometry.coordinates.map((line) => ringDistance(point, line as number[][])));
-  }
-
-  if (geometry.type === "Point") {
-    const coordinate = toPoint(geometry.coordinates);
-    return coordinate ? distanceToSegment(point, coordinate, coordinate) : Number.POSITIVE_INFINITY;
-  }
-
-  return Number.POSITIVE_INFINITY;
-};
-
-async function fetchNearbyFeatures(lng: number, lat: number, buffer: number) {
-  const response = await fetch(buildTpvdNearbyFinalPlotUrl(lng, lat, buffer, 30), { cache: "no-store" });
-  if (!response.ok) throw new Error(`WFS nearby request failed: ${response.status}`);
-  return (await response.json()) as { features?: WfsFeature[]; totalFeatures?: number };
-}
+import { db } from "@/lib/db/client";
 
 export async function GET(request: NextRequest) {
   const lng = Number(request.nextUrl.searchParams.get("lng"));
@@ -112,39 +10,72 @@ export async function GET(request: NextRequest) {
   }
 
   try {
-    const point: [number, number] = [lng, lat];
-    let payload = await fetchNearbyFeatures(lng, lat, 0.00045);
-    let features = payload.features ?? [];
+    for (const radiusM of [150, 600]) {
+      const { rows } = await db.query<{
+        gid: number; fp_no: string; tps_name: string; tps_no: string;
+        village: string; city: string; authority: string; district: string;
+        reser_type: string | null; reser_use: string | null; fp_area_sqm: number | null;
+        geometry: object; click_distance_m: number;
+        water_body_affected: boolean; gamthal_affected: boolean;
+        dp_reservation_affected: boolean; railway_affected: boolean; ht_line_affected: boolean;
+      }>(
+        `SELECT
+          fp.gid, fp.fp_no, fp.tps_name, fp.tps_no, fp.village, fp.city,
+          fp.authority, fp.district, fp.reser_type, fp.reser_use, fp.fp_area_sqm,
+          ST_AsGeoJSON(fp.geom)::json AS geometry,
+          ST_Distance(fp.geom::geography, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography) AS click_distance_m,
+          COALESCE(pc.water_body_affected, false)     AS water_body_affected,
+          COALESCE(pc.gamthal_affected, false)        AS gamthal_affected,
+          COALESCE(pc.dp_reservation_affected, false) AS dp_reservation_affected,
+          COALESCE(pc.railway_affected, false)        AS railway_affected,
+          COALESCE(pc.ht_line_affected, false)        AS ht_line_affected
+        FROM final_plots fp
+        LEFT JOIN plot_constraints pc ON pc.plot_gid = fp.gid
+        WHERE ST_DWithin(fp.geom::geography, ST_SetSRID(ST_MakePoint($1,$2),4326)::geography, $3)
+        ORDER BY fp.geom::geography <-> ST_SetSRID(ST_MakePoint($1,$2),4326)::geography
+        LIMIT 30`,
+        [lng, lat, radiusM]
+      );
 
-    if (!features.length) {
-      payload = await fetchNearbyFeatures(lng, lat, 0.0015);
-      features = payload.features ?? [];
+      if (!rows.length) continue;
+
+      const features = rows.map((row) => ({
+        id: `final_plot_boundary.${row.gid}`,
+        geometry: row.geometry,
+        properties: {
+          gid: row.gid,
+          fp_no: row.fp_no,
+          tps_name: row.tps_name,
+          title_tps_name: row.tps_name,
+          tps_no: row.tps_no,
+          village: row.village,
+          city: row.city,
+          authority: row.authority,
+          district: row.district,
+          reser_type: row.reser_type,
+          reser_use: row.reser_use,
+          fp_area_final: row.fp_area_sqm,
+          click_distance_m: Math.max(0, row.click_distance_m),
+          water_body_affected: row.water_body_affected,
+          gamthal_affected: row.gamthal_affected,
+          dp_reservation_affected: row.dp_reservation_affected,
+          railway_affected: row.railway_affected,
+          ht_line_affected: row.ht_line_affected
+        }
+      }));
+
+      return NextResponse.json({
+        source: "Local PostGIS sargis.final_plots KNN",
+        count: features.length,
+        totalFeatures: features.length,
+        features
+      });
     }
 
-    const rankedFeatures = features
-      .map((feature) => ({
-        ...feature,
-        properties: {
-          ...feature.properties,
-          click_distance_m: Math.max(0, geometryScore(feature.geometry, point))
-        } as TpvdFinalPlotProperties
-      }))
-      .sort((a, b) => geometryScore(a.geometry, point) - geometryScore(b.geometry, point));
-
-    return NextResponse.json({
-      source: "TPVD ctp:final_plot_boundary WFS nearest-feature lookup",
-      count: rankedFeatures.length,
-      totalFeatures: payload.totalFeatures ?? features.length,
-      features: rankedFeatures
-    });
+    return NextResponse.json({ source: "Local PostGIS sargis.final_plots KNN", count: 0, totalFeatures: 0, features: [] });
   } catch (error) {
     return NextResponse.json(
-      {
-        source: "TPVD ctp:final_plot_boundary WFS BBOX lookup",
-        count: 0,
-        features: [],
-        error: error instanceof Error ? error.message : "Unknown TPVD nearby feature error"
-      },
+      { source: "DB feature-nearby", count: 0, features: [], error: error instanceof Error ? error.message : "DB error" },
       { status: 502 }
     );
   }

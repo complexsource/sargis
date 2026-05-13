@@ -3,14 +3,10 @@ import { notFound } from "next/navigation";
 import { getReportPayload } from "@/lib/api/server";
 import { ReportDocument } from "@/components/report/report-document";
 
-type PageProps = {
-  params: {
-    plotId: string;
-  };
-};
+type PageProps = { params: { plotId: string } };
 
-export function generateMetadata({ params }: PageProps): Metadata {
-  const report = getReportPayload(params.plotId);
+export async function generateMetadata({ params }: PageProps): Promise<Metadata> {
+  const report = await getReportPayload(params.plotId);
   return {
     title: report ? `Report ${report.plot.plotId}` : "Report",
     description: report
@@ -19,8 +15,8 @@ export function generateMetadata({ params }: PageProps): Metadata {
   };
 }
 
-export default function ReportPage({ params }: PageProps) {
-  const report = getReportPayload(params.plotId);
+export default async function ReportPage({ params }: PageProps) {
+  const report = await getReportPayload(params.plotId);
 
   if (!report) {
     notFound();
