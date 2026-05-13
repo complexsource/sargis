@@ -1,9 +1,24 @@
+import dotenv from "dotenv";
+import path from "path";
 import cron from "node-cron";
 import { Pool } from "pg";
 
+dotenv.config({ path: path.resolve(__dirname, "../.env") });
+dotenv.config({ path: path.resolve(__dirname, "../.env.local") }); // .env.local overrides if present
+
+const isRemote = process.env.DATABASE_ENV === "production";
+
+function stripSslMode(raw: string) {
+  return raw.replace(/[?&]sslmode=[^&]*/g, (m) => (m.startsWith("?") ? "?" : "")).replace(/\?$/, "");
+}
+
+const connectionString = isRemote
+  ? stripSslMode(process.env.POSTGRES_URL_NON_POOLING ?? "")
+  : (process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/sargis");
+
 const db = new Pool({
-  connectionString:
-    process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/sargis"
+  connectionString,
+  ssl: isRemote ? { rejectUnauthorized: false } : false
 });
 
 const TPVD_WFS = "http://tpvd.openprp.in/geoserver/wfs";
