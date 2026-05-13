@@ -1,0 +1,77 @@
+@import "maplibre-gl/dist/maplibre-gl.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --background: 210 40% 98%;
+    --foreground: 222 47% 11%;
+    --card: 0 0% 100%;
+    --card-foreground: 222 47% 11%;
+    --primary: 221 83% 38%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 172 66% 92%;
+    --secondary-foreground: 180 75% 19%;
+    --muted: 210 40% 94%;
+    --muted-foreground: 215 16% 42%;
+    --accent: 43 96% 91%;
+    --accent-foreground: 32 95% 24%;
+    --destructive: 0 74% 48%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 214 32% 88%;
+    --input: 214 32% 88%;
+    --ring: 221 83% 48%;
+  }
+
+  * {
+    @apply border-border;
+  }
+
+  html {
+    scroll-behavior: smooth;
+  }
+
+  body {
+    @apply bg-background text-foreground antialiased;
+    letter-spacing: 0;
+    font-family: ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+}
+
+@layer utilities {
+  .focus-ring {
+    @apply focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring focus-visible:ring-offset-2;
+  }
+
+  .dashboard-grid {
+    grid-template-columns: minmax(300px, 360px) minmax(0, 1fr) minmax(320px, 390px);
+  }
+
+  .no-scrollbar::-webkit-scrollbar {
+    display: none;
+  }
+
+  .no-scrollbar {
+    -ms-overflow-style: none;
+    scrollbar-width: none;
+  }
+}
+
+@media print {
+  body {
+    background: white;
+  }
+
+  .print-hidden {
+    display: none !important;
+  }
+}
