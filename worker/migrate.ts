@@ -12,14 +12,11 @@ function stripSslMode(raw: string) {
   return raw.replace(/[?&]sslmode=[^&]*/g, (m) => (m.startsWith("?") ? "?" : "")).replace(/\?$/, "");
 }
 
-const connectionString = isRemote
-  ? stripSslMode(process.env.POSTGRES_URL_NON_POOLING ?? "")
-  : (process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/sargis");
-
-const db = new Pool({
-  connectionString,
-  ssl: isRemote ? { rejectUnauthorized: false } : false
-});
+const db = new Pool(
+  isRemote
+    ? { connectionString: stripSslMode(process.env.POSTGRES_URL_NON_POOLING ?? ""), ssl: { rejectUnauthorized: false } }
+    : { connectionString: process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/sargis" }
+);
 
 async function run() {
   const migrationsDir = path.join(__dirname, "migrations");

@@ -12,14 +12,11 @@ function stripSslMode(raw: string) {
   return raw.replace(/[?&]sslmode=[^&]*/g, (m) => (m.startsWith("?") ? "?" : "")).replace(/\?$/, "");
 }
 
-const connectionString = isRemote
-  ? stripSslMode(process.env.POSTGRES_URL_NON_POOLING ?? "")
-  : (process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/sargis");
-
-const db = new Pool({
-  connectionString,
-  ssl: isRemote ? { rejectUnauthorized: false } : false
-});
+const db = new Pool(
+  isRemote
+    ? { connectionString: stripSslMode(process.env.POSTGRES_URL_NON_POOLING ?? ""), ssl: { rejectUnauthorized: false } }
+    : { connectionString: process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/sargis" }
+);
 
 const TPVD_WFS = "http://tpvd.openprp.in/geoserver/wfs";
 const BATCH = 500;
@@ -58,13 +55,6 @@ function num(v: unknown) { const n = Number(v); return Number.isFinite(n) ? n : 
 
 // ── sync progress tracking ───────────────────────────────────────────────────
 
-async function getLastGid(tableName: string): Promise<number> {
-  const { rows } = await db.query<{ last_gid_synced: number | null }>(
-    "SELECT last_gid_synced FROM sync_log WHERE table_name = $1 AND status = 'done' ORDER BY id DESC LIMIT 1",
-    [tableName]
-  );
-  return rows[0]?.last_gid_synced ?? 0;
-}
 
 async function startSyncLog(tableName: string): Promise<number> {
   const { rows } = await db.query<{ id: number }>(

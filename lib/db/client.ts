@@ -2,27 +2,31 @@ import { Pool } from "pg";
 
 const isRemote = process.env.DATABASE_ENV === "production";
 
-function buildConnectionString(raw: string) {
-  // Strip sslmode from the URL so pg-connection-string doesn't override our ssl option
+function stripSslMode(raw: string) {
   return raw.replace(/[?&]sslmode=[^&]*/g, (m) => (m.startsWith("?") ? "?" : "")).replace(/\?$/, "");
 }
-
-const connectionString = isRemote
-  ? buildConnectionString(process.env.POSTGRES_URL ?? "")
-  : (process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/sargis");
 
 declare global {
   // eslint-disable-next-line no-var
   var __pgPool: Pool | undefined;
 }
 
-function createPool() {
+function createPool(): Pool {
+  if (isRemote) {
+    return new Pool({
+      connectionString: stripSslMode(process.env.POSTGRES_URL ?? ""),
+      ssl: { rejectUnauthorized: false },
+      max: 5,
+      idleTimeoutMillis: 30_000,
+      connectionTimeoutMillis: 10_000
+    });
+  }
+
   return new Pool({
-    connectionString,
-    ssl: isRemote ? { rejectUnauthorized: false } : false,
-    max: isRemote ? 5 : 10,
+    connectionString: process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/sargis",
+    max: 10,
     idleTimeoutMillis: 30_000,
-    connectionTimeoutMillis: 10_000
+    connectionTimeoutMillis: 5_000
   });
 }
 
